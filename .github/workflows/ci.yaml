@@ -1,0 +1,44 @@
+name: Elixir CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+
+    env:
+      MIX_ENV: test
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        elixir-version: ['1.9', '1.10']
+        otp-version: ['22.2']
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Use Elixir ${{ matrix.elixir-version }}
+      uses: actions/setup-elixir@v1
+      with:
+        elixir-version: ${{ matrix.elixir-version }}
+        otp-version: ${{ matrix.otp-version }}
+
+    - name: Install Dependencies
+      run: mix deps.get
+
+    - name: Check code formatting
+      run: mix format --check-formatted
+
+    - name: Compile source
+      run: mix compile
+
+    - name: Check code quality
+      run: mix credo
+
+    - name: Run tests and publish test coverage
+      run: mix coveralls.github
