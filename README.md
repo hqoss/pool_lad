@@ -1,5 +1,7 @@
 # 🙅‍♂️ PoolLad
 
+[![Codacy Badge](https://api.codacy.com/project/badge/Grade/f4a181e036974594ad5c733a700a0a28)](https://app.codacy.com/gh/hqoss/pool_lad?utm_source=github.com&utm_medium=referral&utm_content=hqoss/pool_lad&utm_campaign=Badge_Grade_Dashboard)
+
 `pool_lad` is the younger & more energetic version of [`poolboy`](https://github.com/devinus/poolboy).
 
 It's still the _**lightweight, generic pooling library with focus on
