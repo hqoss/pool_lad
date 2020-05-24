@@ -44,7 +44,7 @@ end
 
 ## API Documentation
 
-The full documentation is [published on hex](https://hexdocs.pm/pool_lad/).
+The full documentation is [published on hex](https://hexdocs.pm/pool_lad/PoolLad.html).
 
 ## Sample usage
 
