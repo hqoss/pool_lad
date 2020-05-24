@@ -37,7 +37,7 @@ Add `:pool_lad` as a dependency to your project's `mix.exs`:
 ```elixir
 defp deps do
   [
-    {:pool_lad, "~> 0.0.4"}
+    {:pool_lad, "~> 0.0.5"}
   ]
 end
 ```

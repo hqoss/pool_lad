@@ -4,7 +4,7 @@ defmodule PoolLad.MixProject do
   def project do
     [
       app: :pool_lad,
-      version: "0.0.4",
+      version: "0.0.5",
       elixir: "~> 1.9",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
