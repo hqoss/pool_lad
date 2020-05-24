@@ -40,11 +40,12 @@ defmodule PoolLad do
   defmodule State do
     @moduledoc false
 
-    @enforce_keys ~w(borrow_caller_monitors child_init_opts worker_monitors workers)a
+    @enforce_keys ~w(borrow_caller_monitors child_init_opts worker_monitors worker_supervisor workers)a
     defstruct borrow_caller_monitors: nil,
               child_init_opts: nil,
               waiting: :queue.new(),
               worker_monitors: nil,
+              worker_supervisor: nil,
               workers: nil
   end
 
@@ -218,7 +219,6 @@ defmodule PoolLad do
 
   @impl true
   def init({pool_opts, worker_opts}) do
-    name = Keyword.fetch!(pool_opts, :name)
     worker_count = Keyword.fetch!(pool_opts, :worker_count)
     worker_module = Keyword.fetch!(pool_opts, :worker_module)
 
@@ -233,10 +233,7 @@ defmodule PoolLad do
       raise "Worker module must implement child_spec/1"
     end
 
-    worker_supervisor = Module.concat(name, Supervisor)
-
-    {:ok, worker_supervisor} =
-      DynamicSupervisor.start_link(strategy: :one_for_one, name: worker_supervisor)
+    {:ok, worker_supervisor} = DynamicSupervisor.start_link(strategy: :one_for_one)
 
     # Used to monitor caller processes.
     #
@@ -263,6 +260,7 @@ defmodule PoolLad do
        borrow_caller_monitors: borrow_caller_monitors,
        child_init_opts: child_init_opts,
        worker_monitors: worker_monitors,
+       worker_supervisor: worker_supervisor,
        workers: workers
      }}
   end

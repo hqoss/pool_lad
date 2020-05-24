@@ -5,7 +5,8 @@ defmodule PoolLadTest do
 
   @this_module __MODULE__
   @worker_pool Module.concat(@this_module, WorkerPool)
-  @worker_supervisor Module.concat(@worker_pool, Supervisor)
+
+  # @worker_supervisor Module.concat(@worker_pool, Supervisor)
 
   defmodule TestWorker do
     @moduledoc false
@@ -41,6 +42,15 @@ defmodule PoolLadTest do
     [pool_opts: pool_opts, worker_opts: worker_opts]
   end
 
+  setup %{pool_opts: pool_opts, worker_opts: worker_opts} do
+    assert {:ok, pid} = start_supervised(PoolLad.child_spec(pool_opts, worker_opts))
+    assert %PoolLad.State{worker_supervisor: worker_supervisor} = :sys.get_state(pid)
+
+    test_pid = self()
+
+    [pid: pid, test_pid: test_pid, worker_supervisor: worker_supervisor]
+  end
+
   describe "PoolLad" do
     test "child_spec/1 returns a valid child spec", %{
       pool_opts: pool_opts,
@@ -55,45 +65,22 @@ defmodule PoolLadTest do
     end
 
     test "start_link/2 starts a linked DynamicSupervisor", %{
-      pool_opts: pool_opts,
-      worker_opts: worker_opts
+      pid: pid,
+      worker_supervisor: worker_supervisor
     } do
-      assert {:ok, pid} = start_supervised(PoolLad.child_spec(pool_opts, worker_opts))
-
-      assert worker_supervisor = Process.whereis(@worker_supervisor)
-
       links = pid |> Process.info() |> Keyword.get(:links)
       assert Enum.member?(links, worker_supervisor) === true
     end
 
-    test "start_link/2 starts workers under its DynamicSupervisor", %{
-      pool_opts: pool_opts,
-      worker_opts: worker_opts
+    test "start_link/2 starts workers under its DynamicSupervisor with provided opts", %{
+      worker_opts: worker_opts,
+      worker_supervisor: worker_supervisor
     } do
-      assert {:ok, pid} = start_supervised(PoolLad.child_spec(pool_opts, worker_opts))
-
-      worker_module = pool_opts[:worker_module]
-
       assert [
-               {:undefined, _worker_pid_1, :worker, [^worker_module]},
-               {:undefined, _worker_pid_2, :worker, [^worker_module]},
-               {:undefined, _worker_pid_3, :worker, [^worker_module]}
-             ] = DynamicSupervisor.which_children(@worker_supervisor)
-    end
-
-    test "start_link/2 starts all workers with worker_opts", %{
-      pool_opts: pool_opts,
-      worker_opts: worker_opts
-    } do
-      assert {:ok, pid} = start_supervised(PoolLad.child_spec(pool_opts, worker_opts))
-
-      worker_module = pool_opts[:worker_module]
-
-      assert [
-               {:undefined, worker_pid_1, :worker, [^worker_module]},
-               {:undefined, worker_pid_2, :worker, [^worker_module]},
-               {:undefined, worker_pid_3, :worker, [^worker_module]}
-             ] = DynamicSupervisor.which_children(@worker_supervisor)
+               {:undefined, worker_pid_1, :worker, [TestWorker]},
+               {:undefined, worker_pid_2, :worker, [TestWorker]},
+               {:undefined, worker_pid_3, :worker, [TestWorker]}
+             ] = DynamicSupervisor.which_children(worker_supervisor)
 
       assert :sys.get_state(worker_pid_1) === worker_opts[:initial_colours]
       assert :sys.get_state(worker_pid_2) === worker_opts[:initial_colours]
@@ -101,13 +88,10 @@ defmodule PoolLadTest do
     end
 
     test "start_link/2 correctly configures its internal state", %{
-      pool_opts: pool_opts,
-      worker_opts: worker_opts
+      pid: pid,
+      worker_opts: worker_opts,
+      worker_supervisor: worker_supervisor
     } do
-      assert {:ok, pid} = start_supervised(PoolLad.child_spec(pool_opts, worker_opts))
-
-      assert worker_supervisor = Process.whereis(@worker_supervisor)
-
       assert %PoolLad.State{
                borrow_caller_monitors: borrow_caller_monitors,
                child_init_opts: {^worker_supervisor, TestWorker, ^worker_opts},
@@ -119,7 +103,7 @@ defmodule PoolLadTest do
       assert :queue.is_empty(waiting) === true
 
       supervised_pids =
-        @worker_supervisor
+        worker_supervisor
         |> DynamicSupervisor.which_children()
         |> Enum.map(fn {_, pid, _, _} -> pid end)
 
@@ -132,9 +116,7 @@ defmodule PoolLadTest do
              |> Enum.all?(fn {pid, _reference} -> Enum.member?(supervised_pids, pid) end)
     end
 
-    test "basic borrow", %{pool_opts: pool_opts, worker_opts: worker_opts} do
-      assert {:ok, pid} = start_supervised(PoolLad.child_spec(pool_opts, worker_opts))
-
+    test "basic borrow", %{pid: pid} do
       assert %PoolLad.State{
                borrow_caller_monitors: borrow_caller_monitors,
                workers: workers
@@ -153,17 +135,10 @@ defmodule PoolLadTest do
              } = :sys.get_state(pid)
     end
 
-    test "borrow when no workers available, wait", %{
-      pool_opts: pool_opts,
-      worker_opts: worker_opts
-    } do
-      assert {:ok, pid} = start_supervised(PoolLad.child_spec(pool_opts, worker_opts))
-
+    test "borrow when no workers available, wait", %{pid: pid, test_pid: test_pid} do
       assert {:ok, first_worker} = PoolLad.borrow(pid)
       assert {:ok, _} = PoolLad.borrow(pid)
       assert {:ok, _} = PoolLad.borrow(pid)
-
-      test_pid = self()
 
       spawn(fn ->
         {:ok, worker} = PoolLad.borrow(pid)
@@ -178,12 +153,7 @@ defmodule PoolLadTest do
       assert_receive(^first_worker)
     end
 
-    test "borrow when no workers available, no-wait", %{
-      pool_opts: pool_opts,
-      worker_opts: worker_opts
-    } do
-      assert {:ok, pid} = start_supervised(PoolLad.child_spec(pool_opts, worker_opts))
-
+    test "borrow when no workers available, no-wait", %{pid: pid} do
       assert {:ok, _} = PoolLad.borrow(pid)
       assert {:ok, _} = PoolLad.borrow(pid)
       assert {:ok, _} = PoolLad.borrow(pid)
@@ -191,17 +161,11 @@ defmodule PoolLadTest do
       assert {:error, :full} = PoolLad.borrow(pid, false)
     end
 
-    test "borrow when no workers available, wait, cancel waiting", %{
-      pool_opts: pool_opts,
-      worker_opts: worker_opts
-    } do
-      assert {:ok, pid} = start_supervised(PoolLad.child_spec(pool_opts, worker_opts))
-
+    test "borrow when no workers available, wait, cancel waiting", %{pid: pid, test_pid: test_pid} do
       assert {:ok, first_worker} = PoolLad.borrow(pid)
       assert {:ok, _} = PoolLad.borrow(pid)
       assert {:ok, _} = PoolLad.borrow(pid)
 
-      test_pid = self()
       timeout = 250
 
       caller_pid =
@@ -243,12 +207,7 @@ defmodule PoolLadTest do
       assert_receive({:error, :timeout})
     end
 
-    test "basic return", %{
-      pool_opts: pool_opts,
-      worker_opts: worker_opts
-    } do
-      assert {:ok, pid} = start_supervised(PoolLad.child_spec(pool_opts, worker_opts))
-
+    test "basic return", %{pid: pid} do
       assert {:ok, first_worker} = PoolLad.borrow(pid)
       assert {:ok, second_worker} = PoolLad.borrow(pid)
       assert {:ok, third_worker} = PoolLad.borrow(pid)
@@ -272,18 +231,15 @@ defmodule PoolLadTest do
              } = :sys.get_state(pid)
     end
 
-    test "ignored return", %{
-      pool_opts: pool_opts,
-      worker_opts: worker_opts
-    } do
-      assert {:ok, pid} = start_supervised(PoolLad.child_spec(pool_opts, worker_opts))
-
+    test "ignored return", %{pid: pid} do
       assert {:ok, worker} = PoolLad.borrow(pid)
 
       assert :ok = PoolLad.return(pid, worker)
 
       assert capture_log(fn ->
                assert :ok = PoolLad.return(pid, worker)
+
+               :timer.sleep(5)
              end) =~ "#{inspect(worker)} already returned. Ignoring..."
     end
 
@@ -292,13 +248,11 @@ defmodule PoolLadTest do
     end
 
     test "worker restart (empty waiting queue)", %{
-      pool_opts: pool_opts,
-      worker_opts: worker_opts
+      pid: pid,
+      worker_supervisor: worker_supervisor
     } do
-      assert {:ok, pid} = start_supervised(PoolLad.child_spec(pool_opts, worker_opts))
-
       original_worker_pids =
-        @worker_supervisor
+        worker_supervisor
         |> DynamicSupervisor.which_children()
         |> Enum.map(fn {_, worker_pid, _, _} -> worker_pid end)
 
@@ -310,14 +264,14 @@ defmodule PoolLadTest do
                :timer.sleep(5)
 
                {_, new_worker_pid, _, _} =
-                 @worker_supervisor
+                 worker_supervisor
                  |> DynamicSupervisor.which_children()
                  |> Enum.find(fn {_, worker_pid, _, _} ->
                    worker_pid not in original_worker_pids
                  end)
 
                remaining_worker_pids =
-                 @worker_supervisor
+                 worker_supervisor
                  |> DynamicSupervisor.which_children()
                  |> Enum.filter(fn {_, worker_pid, _, _} -> worker_pid !== new_worker_pid end)
                  |> Enum.map(fn {_, worker_pid, _, _} -> worker_pid end)
@@ -329,19 +283,16 @@ defmodule PoolLadTest do
     end
 
     test "worker restart (waiting queue not empty)", %{
-      pool_opts: pool_opts,
-      worker_opts: worker_opts
+      pid: pid,
+      test_pid: test_pid,
+      worker_supervisor: worker_supervisor
     } do
-      assert {:ok, pid} = start_supervised(PoolLad.child_spec(pool_opts, worker_opts))
-
       assert {:ok, _} = PoolLad.borrow(pid)
       assert {:ok, _} = PoolLad.borrow(pid)
       assert {:ok, _} = PoolLad.borrow(pid)
 
       assert {_, random_worker_pid, _, _} =
-               @worker_supervisor |> DynamicSupervisor.which_children() |> Enum.random()
-
-      test_pid = self()
+               worker_supervisor |> DynamicSupervisor.which_children() |> Enum.random()
 
       _caller_pid =
         spawn(fn ->
@@ -361,7 +312,7 @@ defmodule PoolLadTest do
                assert_receive(new_worker_pid)
 
                assert {_, ^new_worker_pid, _, _} =
-                        @worker_supervisor
+                        worker_supervisor
                         |> DynamicSupervisor.which_children()
                         |> Enum.find(fn {_, worker_pid, _, _} ->
                           worker_pid === new_worker_pid
@@ -371,15 +322,8 @@ defmodule PoolLadTest do
              end) =~ "Worker #{inspect(random_worker_pid)} died. Restarting..."
     end
 
-    test "caller died while worker was on loan", %{
-      pool_opts: pool_opts,
-      worker_opts: worker_opts
-    } do
-      assert {:ok, pid} = start_supervised(PoolLad.child_spec(pool_opts, worker_opts))
-
+    test "caller died while worker was on loan", %{pid: pid, test_pid: test_pid} do
       assert %PoolLad.State{workers: [next_worker | rest]} = :sys.get_state(pid)
-
-      test_pid = self()
 
       caller_pid =
         spawn(fn ->
@@ -409,17 +353,10 @@ defmodule PoolLadTest do
       assert [] = :ets.tab2list(borrow_caller_monitors)
     end
 
-    test "caller died while waiting for a worker", %{
-      pool_opts: pool_opts,
-      worker_opts: worker_opts
-    } do
-      assert {:ok, pid} = start_supervised(PoolLad.child_spec(pool_opts, worker_opts))
-
+    test "caller died while waiting for a worker", %{pid: pid, test_pid: test_pid} do
       assert {:ok, _} = PoolLad.borrow(pid)
       assert {:ok, _} = PoolLad.borrow(pid)
       assert {:ok, _} = PoolLad.borrow(pid)
-
-      test_pid = self()
 
       caller_pid =
         spawn(fn ->
@@ -445,12 +382,7 @@ defmodule PoolLadTest do
     end
   end
 
-  test "transaction executes the borrow and return cycle", %{
-    pool_opts: pool_opts,
-    worker_opts: worker_opts
-  } do
-    assert {:ok, pid} = start_supervised(PoolLad.child_spec(pool_opts, worker_opts))
-
+  test "transaction executes the borrow and return cycle", %{pid: pid} do
     assert %PoolLad.State{workers: workers} = :sys.get_state(pid)
 
     assert {:ok, colour} =

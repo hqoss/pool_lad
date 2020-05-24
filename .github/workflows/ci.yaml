@@ -46,4 +46,4 @@ jobs:
       run: mix credo
 
     - name: Run tests and publish test coverage
-      run: mix coveralls.github
+      run: mix coveralls.github --trace
