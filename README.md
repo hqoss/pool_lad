@@ -1,6 +1,7 @@
 ![Elixir CI](https://github.com/hqoss/pool_lad/workflows/Elixir%20CI/badge.svg)
 [![Codacy Badge](https://api.codacy.com/project/badge/Grade/4cfbf336d5914e09971c015bd68426a0)](https://www.codacy.com/gh/hqoss/pool_lad?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=hqoss/pool_lad&amp;utm_campaign=Badge_Grade)
 [![Hex.pm](https://img.shields.io/hexpm/v/pool_lad.svg)](https://hex.pm/packages/pool_lad)
+[![Coverage Status](https://coveralls.io/repos/github/hqoss/pool_lad/badge.svg?branch=master)](https://coveralls.io/github/hqoss/pool_lad?branch=master)
 
 # 🙅‍♂️ PoolLad
 

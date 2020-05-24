@@ -349,7 +349,7 @@ defmodule PoolLad do
         {:DOWN, ref, :process, pid, _reason},
         %State{borrow_caller_monitors: borrow_caller_monitors} = state
       ) do
-    case :ets.match(borrow_caller_monitors, {"$1", ref}) do
+    case :ets.match(borrow_caller_monitors, {:"$1", ref}) do
       # Means there was an active borrow and the caller process died.
       # We handle this as a return of the borrowed worker pid.
       [[pid]] ->

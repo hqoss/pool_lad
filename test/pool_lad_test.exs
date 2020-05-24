@@ -1,9 +1,33 @@
 defmodule PoolLadTest do
   use ExUnit.Case
 
+  import ExUnit.CaptureLog
+
   @this_module __MODULE__
   @worker_pool Module.concat(@this_module, WorkerPool)
   @worker_supervisor Module.concat(@worker_pool, Supervisor)
+
+  defmodule TestWorker do
+    @moduledoc false
+
+    use GenServer
+
+    @this_module __MODULE__
+
+    def start_link(opts), do: GenServer.start_link(@this_module, opts)
+
+    @impl true
+    def init(opts) do
+      initial_colours = Keyword.get(opts, :initial_colours, [])
+      {:ok, initial_colours}
+    end
+
+    @impl true
+    def handle_call(:get_random_colour, _from, colours) do
+      colour = Enum.random(colours)
+      {:reply, {:ok, colour}, colours}
+    end
+  end
 
   setup_all do
     pool_opts = [
@@ -18,11 +42,22 @@ defmodule PoolLadTest do
   end
 
   describe "PoolLad" do
+    test "child_spec/1 returns a valid child spec", %{
+      pool_opts: pool_opts,
+      worker_opts: worker_opts
+    } do
+      assert %{
+               id: :worker_pool,
+               start: {PoolLad, :start_link, [^pool_opts, ^worker_opts]}
+             } = child_spec = PoolLad.child_spec(pool_opts, worker_opts)
+
+      assert ^child_spec = PoolLad.child_spec({pool_opts, worker_opts})
+    end
+
     test "start_link/2 starts a linked DynamicSupervisor", %{
       pool_opts: pool_opts,
       worker_opts: worker_opts
     } do
-      # Maybe start_supervised is enough here to cover the start_link/2 call.
       assert {:ok, pid} = PoolLad.start_link(pool_opts, worker_opts)
 
       assert worker_supervisor = Process.whereis(@worker_supervisor)
@@ -177,15 +212,15 @@ defmodule PoolLadTest do
 
       caller_pid =
         spawn(fn ->
+          Process.send_after(test_pid, :waiting, 0)
           result = PoolLad.borrow(pid, true, timeout)
           send(test_pid, result)
         end)
 
-      :timer.sleep(5)
+      assert_receive(:waiting)
 
       # Ensure the caller is in the waiting queue
       assert %PoolLad.State{
-               # borrow_caller_monitors: borrow_caller_monitors,
                waiting: waiting,
                workers: []
              } = :sys.get_state(pid)
@@ -205,7 +240,6 @@ defmodule PoolLadTest do
       assert :ok = PoolLad.return(pid, first_worker)
 
       assert %PoolLad.State{
-               # borrow_caller_monitors: borrow_caller_monitors,
                waiting: waiting,
                workers: [^first_worker]
              } = :sys.get_state(pid)
@@ -215,25 +249,219 @@ defmodule PoolLadTest do
       assert_receive({:error, :timeout})
     end
 
-    test "basic return" do
+    test "basic return", %{
+      pool_opts: pool_opts,
+      worker_opts: worker_opts
+    } do
+      assert {:ok, pid} = start_supervised(PoolLad.child_spec(pool_opts, worker_opts))
+
+      assert {:ok, first_worker} = PoolLad.borrow(pid)
+      assert {:ok, second_worker} = PoolLad.borrow(pid)
+      assert {:ok, third_worker} = PoolLad.borrow(pid)
+
+      assert :ok = PoolLad.return(pid, first_worker)
+
+      assert %PoolLad.State{
+               workers: [^first_worker]
+             } = :sys.get_state(pid)
+
+      assert :ok = PoolLad.return(pid, second_worker)
+
+      assert %PoolLad.State{
+               workers: [^second_worker, ^first_worker]
+             } = :sys.get_state(pid)
+
+      assert :ok = PoolLad.return(pid, third_worker)
+
+      assert %PoolLad.State{
+               workers: [^third_worker, ^second_worker, ^first_worker]
+             } = :sys.get_state(pid)
     end
 
-    test "ignored return" do
+    test "ignored return", %{
+      pool_opts: pool_opts,
+      worker_opts: worker_opts
+    } do
+      assert {:ok, pid} = start_supervised(PoolLad.child_spec(pool_opts, worker_opts))
+
+      assert {:ok, worker} = PoolLad.borrow(pid)
+
+      assert :ok = PoolLad.return(pid, worker)
+
+      assert capture_log(fn ->
+               assert :ok = PoolLad.return(pid, worker)
+             end) =~ "#{inspect(worker)} already returned. Ignoring..."
     end
 
     test "ignored return (the worker on loan has died)" do
+      :todo
     end
 
-    test "worker restart (empty waiting queue)" do
+    test "worker restart (empty waiting queue)", %{
+      pool_opts: pool_opts,
+      worker_opts: worker_opts
+    } do
+      assert {:ok, pid} = start_supervised(PoolLad.child_spec(pool_opts, worker_opts))
+
+      original_worker_pids =
+        @worker_supervisor
+        |> DynamicSupervisor.which_children()
+        |> Enum.map(fn {_, worker_pid, _, _} -> worker_pid end)
+
+      assert random_worker_pid = Enum.random(original_worker_pids)
+
+      assert capture_log(fn ->
+               assert true = Process.exit(random_worker_pid, :boom)
+
+               :timer.sleep(5)
+
+               {_, new_worker_pid, _, _} =
+                 @worker_supervisor
+                 |> DynamicSupervisor.which_children()
+                 |> Enum.find(fn {_, worker_pid, _, _} ->
+                   worker_pid not in original_worker_pids
+                 end)
+
+               remaining_worker_pids =
+                 @worker_supervisor
+                 |> DynamicSupervisor.which_children()
+                 |> Enum.filter(fn {_, worker_pid, _, _} -> worker_pid !== new_worker_pid end)
+                 |> Enum.map(fn {_, worker_pid, _, _} -> worker_pid end)
+
+               assert %PoolLad.State{
+                        workers: [^new_worker_pid | ^remaining_worker_pids]
+                      } = :sys.get_state(pid)
+             end) =~ "Worker #{inspect(random_worker_pid)} died. Restarting..."
     end
 
-    test "worker restart (waiting queue not empty)" do
+    test "worker restart (waiting queue not empty)", %{
+      pool_opts: pool_opts,
+      worker_opts: worker_opts
+    } do
+      assert {:ok, pid} = start_supervised(PoolLad.child_spec(pool_opts, worker_opts))
+
+      assert {:ok, _} = PoolLad.borrow(pid)
+      assert {:ok, _} = PoolLad.borrow(pid)
+      assert {:ok, _} = PoolLad.borrow(pid)
+
+      assert {_, random_worker_pid, _, _} =
+               @worker_supervisor |> DynamicSupervisor.which_children() |> Enum.random()
+
+      test_pid = self()
+
+      _caller_pid =
+        spawn(fn ->
+          assert {:ok, new_worker_pid} = PoolLad.borrow(pid)
+          send(test_pid, new_worker_pid)
+
+          # Simulate a long-running process, assume return happens later.
+          # Should the return occur immediately after the send/2 above
+          # the worker pid would have been returned straight back into
+          # the pool and our test invalidated.
+          :timer.sleep(5_000)
+        end)
+
+      assert capture_log(fn ->
+               assert true = Process.exit(random_worker_pid, :boom)
+
+               assert_receive(new_worker_pid)
+
+               assert {_, ^new_worker_pid, _, _} =
+                        @worker_supervisor
+                        |> DynamicSupervisor.which_children()
+                        |> Enum.find(fn {_, worker_pid, _, _} ->
+                          worker_pid === new_worker_pid
+                        end)
+
+               assert %PoolLad.State{workers: []} = :sys.get_state(pid)
+             end) =~ "Worker #{inspect(random_worker_pid)} died. Restarting..."
     end
 
-    test "caller died while worker was on loan" do
+    test "caller died while worker was on loan", %{
+      pool_opts: pool_opts,
+      worker_opts: worker_opts
+    } do
+      assert {:ok, pid} = start_supervised(PoolLad.child_spec(pool_opts, worker_opts))
+
+      assert %PoolLad.State{workers: [next_worker | rest]} = :sys.get_state(pid)
+
+      test_pid = self()
+
+      caller_pid =
+        spawn(fn ->
+          assert {:ok, ^next_worker} = PoolLad.borrow(pid)
+          send(test_pid, :borrow_successful)
+
+          # Simulate a long-running process so that we can
+          # send an explicit exit signal to it later.
+          :timer.sleep(5_000)
+        end)
+
+      ref = Process.monitor(caller_pid)
+
+      assert_receive(:borrow_successful)
+
+      assert %PoolLad.State{workers: ^rest} = :sys.get_state(pid)
+
+      Process.exit(caller_pid, :boom)
+
+      assert_receive({:DOWN, ^ref, :process, ^caller_pid, :boom})
+
+      assert %PoolLad.State{
+               borrow_caller_monitors: borrow_caller_monitors,
+               workers: [^next_worker | ^rest]
+             } = :sys.get_state(pid)
+
+      assert [] = :ets.tab2list(borrow_caller_monitors)
     end
 
-    test "caller died while waiting for a worker" do
+    test "caller died while waiting for a worker", %{
+      pool_opts: pool_opts,
+      worker_opts: worker_opts
+    } do
+      assert {:ok, pid} = start_supervised(PoolLad.child_spec(pool_opts, worker_opts))
+
+      assert {:ok, _} = PoolLad.borrow(pid)
+      assert {:ok, _} = PoolLad.borrow(pid)
+      assert {:ok, _} = PoolLad.borrow(pid)
+
+      test_pid = self()
+
+      caller_pid =
+        spawn(fn ->
+          Process.send_after(test_pid, :waiting, 0)
+          assert {:ok, _next_worker} = PoolLad.borrow(pid)
+        end)
+
+      ref = Process.monitor(caller_pid)
+
+      assert_receive(:waiting)
+
+      assert %PoolLad.State{waiting: waiting} = :sys.get_state(pid)
+
+      assert {{:value, {{^caller_pid, _ref}, _request_id, _borrow_caller_monitor}}, _next_queue} =
+               :queue.out(waiting)
+
+      Process.exit(caller_pid, :boom)
+
+      assert_receive({:DOWN, ^ref, :process, ^caller_pid, :boom})
+
+      assert %PoolLad.State{waiting: waiting} = :sys.get_state(pid)
+      assert :queue.is_empty(waiting) === true
     end
+  end
+
+  test "transaction executes the borrow and return cycle", %{
+    pool_opts: pool_opts,
+    worker_opts: worker_opts
+  } do
+    assert {:ok, pid} = start_supervised(PoolLad.child_spec(pool_opts, worker_opts))
+
+    assert %PoolLad.State{workers: workers} = :sys.get_state(pid)
+
+    assert {:ok, colour} =
+             PoolLad.transaction(pid, fn worker -> GenServer.call(worker, :get_random_colour) end)
+
+    assert %PoolLad.State{workers: ^workers} = :sys.get_state(pid)
   end
 end
