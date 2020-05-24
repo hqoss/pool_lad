@@ -22,7 +22,7 @@ defmodule PoolLadTest do
       pool_opts: pool_opts,
       worker_opts: worker_opts
     } do
-      # TODO check if start_supervised is enough here..
+      # Maybe start_supervised is enough here to cover the start_link/2 call.
       assert {:ok, pid} = PoolLad.start_link(pool_opts, worker_opts)
 
       assert worker_supervisor = Process.whereis(@worker_supervisor)
