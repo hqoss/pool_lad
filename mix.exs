@@ -4,14 +4,15 @@ defmodule PoolLad.MixProject do
   def project do
     [
       app: :pool_lad,
-      version: "0.0.1",
+      version: "0.0.3",
       elixir: "~> 1.9",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       test_coverage: [tool: ExCoveralls],
       description: description(),
       docs: docs(),
-      package: package()
+      package: package(),
+      elixirc_paths: elixirc_paths(Mix.env())
     ]
   end
 
@@ -61,8 +62,12 @@ defmodule PoolLad.MixProject do
   end
 
   defp description do
-    "🙅‍♂️ A simpler and more modern Poolboy."
+    "🙅‍♂️ The younger & more energetic version of :poolboy"
   end
+
+  # Specifies which paths to compile per environment.
+  defp elixirc_paths(:test), do: ["lib", "test/__support"]
+  defp elixirc_paths(_), do: ["lib"]
 
   # Run "mix help deps" to learn about dependencies.
   defp deps do
