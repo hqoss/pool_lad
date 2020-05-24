@@ -29,6 +29,11 @@ jobs:
     - name: Compile source
       run: mix compile
 
+    - name: Compile source (prod)
+      run: mix compile
+      env:
+        MIX_ENV: prod
+
     - name: Check code quality
       run: mix credo
 
@@ -37,6 +42,8 @@ jobs:
 
     - name: Build package
       run: mix hex.build
+      env:
+        MIX_ENV: prod
 
     - name: Publish package
       run: mix hex.publish --yes

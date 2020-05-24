@@ -37,6 +37,11 @@ jobs:
     - name: Compile source
       run: mix compile
 
+    - name: Compile source (prod)
+      run: mix compile
+      env:
+        MIX_ENV: prod
+
     - name: Check code quality
       run: mix credo
 

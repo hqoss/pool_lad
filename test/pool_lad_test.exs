@@ -58,18 +58,12 @@ defmodule PoolLadTest do
       pool_opts: pool_opts,
       worker_opts: worker_opts
     } do
-      assert {:ok, pid} = PoolLad.start_link(pool_opts, worker_opts)
+      assert {:ok, pid} = start_supervised(PoolLad.child_spec(pool_opts, worker_opts))
 
       assert worker_supervisor = Process.whereis(@worker_supervisor)
 
       links = pid |> Process.info() |> Keyword.get(:links)
-
-      # Ensure only the caller and the DynamicSupervisor are linked
-      assert Enum.count(links) === 2
-      assert Enum.member?(links, self()) === true
       assert Enum.member?(links, worker_supervisor) === true
-
-      assert :ok = GenServer.stop(pid)
     end
 
     test "start_link/2 starts workers under its DynamicSupervisor", %{
